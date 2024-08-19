@@ -150,11 +150,13 @@ function cloneJobSetup_() {
 function cloneJobFinish_() {
   cloneJob.end = Date.now();
   cloneJob.totalRuntime = (cloneJob.end - cloneJob.start) / 60000
-  MailApp.sendEmail(Session.getActiveUser().getEmail(), "Drive clone complete", "Your drive clone job has completed successfully\n\n" +
+  summaryString = "Your drive clone job has completed successfully\n\n" +
     "\nFolders copied: " + cloneJob.folderCount +
     "\nFiles copied: " + cloneJob.fileCount +
     "\nFailures: " + cloneJob.failures +
-    "\nTotal Runtime: " + Math.round(cloneJob.totalRuntime) + " Minutes\n");
+    "\nTotal Runtime: " + Math.round(cloneJob.totalRuntime) + " Minutes\n";
+  Logger.log(summaryString)
+  MailApp.sendEmail(Session.getActiveUser().getEmail(), "Drive clone complete", summaryString);
 }
 //----------------------------------------------\\
 function traverseDrive_(driveTree) {
