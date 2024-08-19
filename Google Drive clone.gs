@@ -39,6 +39,19 @@ let cloneJob;
 //Set to true if you want to MOVE files to the destination. 
 let moveFiles = false;
 
+//Set this to true if you don't want to send email notifications (requires Advanced Drive Service enabled)
+let suppressEmailNotifications = true;
+
+//Shall we ensure that original owner do have some permissions? (Only for suppressEmailNotifications = true)
+//  Possible values: reader, commenter, writer, null. Script will explicitly give this permission to the owner unless null.
+let ensureOwnerPermission = null;
+
+//----------------------------------------------\\
+if (!Drive && suppressEmailNotifications) {
+  throw "Advanced Drive API is probably not available. See https://developers.google.com/apps-script/guides/services/advanced?authuser=0#enable_advanced_services";
+}
+//----------------------------------------------\\
+
 //Job is divided into phases. Phase 0 is the only one that can't restart if it runs out of time. 
 //Testing indicates that you should be able to traverse a thousand nested folders in 5 min. 
 //If it does timeout during phase 0 you'll need to have it traverse fewer folders. 
@@ -200,21 +213,54 @@ function createFolders_(folder) {
   }
 }
 //----------------------------------------------\\
+function copyPermissions_(file) {
+  // Works for both files and folders.
+  // Requires Advanced Drive Service.
+  Logger.log("Getting permissions for %s", file.name);
+  let filePermissionsList = Drive.Permissions.list(file.id, {fields: "permissions(id,type,emailAddress,role)"}).permissions;
+  Logger.log("Creating permissions for its copy, %s", file.destId);
+
+  for (permission of filePermissionsList) {
+    let newRole = permission.role
+    if ( permission.role == "owner" ) {
+      // do not add former owner's permission if ensureOwnerPermission is null
+      if (ensureOwnerPermission === null ) continue;
+      // else
+      newRole = ensureOwnerPermission;
+    }
+    Drive.Permissions.create(
+      {
+        type: permission.type,
+        emailAddress: permission.emailAddress,
+        role: newRole
+      }, 
+      file.destId, 
+      {
+        sendNotificationEmail: false
+      }
+    ) 
+  }
+}
+//----------------------------------------------\\
 function setFolderSharing_(folder) {
   if (folder.phase < cloneJob.phase && !isTimedOut_()) {
-    let driveSourceFolder = DriveApp.getFolderById(folder.id);
-    let driveDestFolder = DriveApp.getFolderById(folder.destId);
-    let editors = getUserEmails_(driveSourceFolder, "editors");
-    if (editors && editors.length > 0) {
-      Logger.log("Adding editors for " + folder.name);
-      driveDestFolder.addEditors(editors);
-      folder.editors = editors;
-    }
-    let viewers = getUserEmails_(driveSourceFolder, "viewers");
-    if (viewers && viewers.length > 0) {
-      Logger.log("Adding viewers for " + folder.name);
-      driveDestFolder.addViewers(viewers);
-      folder.viewers = viewers;
+    if (suppressEmailNotifications) {
+      copyPermissions_(folder);
+    } else {
+      let driveSourceFolder = DriveApp.getFolderById(folder.id);
+      let driveDestFolder = DriveApp.getFolderById(folder.destId);
+      let editors = getUserEmails_(driveSourceFolder, "editors");
+      if (editors && editors.length > 0) {
+        Logger.log("Adding editors for " + folder.name);
+        driveDestFolder.addEditors(editors);
+        folder.editors = editors;
+      }
+      let viewers = getUserEmails_(driveSourceFolder, "viewers");
+      if (viewers && viewers.length > 0) {
+        Logger.log("Adding viewers for " + folder.name);
+        driveDestFolder.addViewers(viewers);
+        folder.viewers = viewers;
+      }
     }
   }
   folder.phase = 2;
@@ -226,19 +272,23 @@ function setFileSharing_(folder) {
       if (isTimedOut_()) {
         return;
       }
-      let driveDestFile = DriveApp.getFileById(file.destId);
-      let driveSourceFile = DriveApp.getFileById(file.id);
-      let editors = getUserEmails_(driveSourceFile, "editors");
-      if (editors && editors.length > 0) {
-        Logger.log("Adding editors for " + file.name);
-        driveDestFile.addEditors(editors);
-        file.editors = editors;
-      }
-      let viewers = getUserEmails_(driveSourceFile, "viewers");
-      if (viewers && viewers.length > 0) {
-        Logger.log("Adding viewers for " + file.name);
-        driveDestFile.addViewers(viewers);
-        file.viewers = viewers;
+      if (suppressEmailNotifications) {
+        copyPermissions_(file)
+      } else {
+        let driveDestFile = DriveApp.getFileById(file.destId);
+        let driveSourceFile = DriveApp.getFileById(file.id);
+        let editors = getUserEmails_(driveSourceFile, "editors");
+        if (editors && editors.length > 0) {
+          Logger.log("Adding editors for " + file.name);
+          driveDestFile.addEditors(editors);
+          file.editors = editors;
+        }
+        let viewers = getUserEmails_(driveSourceFile, "viewers");
+        if (viewers && viewers.length > 0) {
+          Logger.log("Adding viewers for " + file.name);
+          driveDestFile.addViewers(viewers);
+          file.viewers = viewers;
+        }
       }
     }
   }
