@@ -26,12 +26,12 @@ Usage:
 const sourceFolderId = "SOURCEFOLDERID";
 //const sourceFolderId = DriveApp.getRootFolder().getId();
 //ID of the destination folder. 
-const targetParentFolderId = '1dZY1c9SD-6XOPuQh81aCe3cNa5zJj3Xs';
+const targetParentFolderId = 'DESTINATIONFOLDERID';
 //The temporary state filename - it will be written to the root of the source folder. 
 const statefileFilename = 'driveClone.json';
 //Official max runtime is 6 minutes for unpaid and 30 min for paid accounts. Some processes aren't easy to break out of. 
 //Go with 5 min here to be safe. 
-const maxRuntime = 300 * 1000;
+const maxRuntime = 5 * 60 * 1000;
 //How long to wait to trigger another run of runCloneJob. 30 seconds seems fair. 
 const msToNextRun = 30000;
 //This is the global object that's going to hold all details about the clone job. 
@@ -140,7 +140,8 @@ function cloneJobSetup_() {
     folders: [],
     files: [],
     editors: [],
-    viewers: []
+    viewers: [],
+    path: "/"
   };
   cloneJob.tree.push(root);
   traverseDrive_(cloneJob.tree);
@@ -166,8 +167,9 @@ function traverseDrive_(driveTree) {
     let driveSubFolders = driveFolder.getFolders();
     while (driveSubFolders.hasNext()) {
       let driveSubFolder = driveSubFolders.next();
+      let subfolderName = driveSubFolder.getName();
       let newSubFolder = {
-        name: driveSubFolder.getName(),
+        name: subfolderName,
         id: driveSubFolder.getId(),
         parentId: null,
         phase: 0,
@@ -176,7 +178,8 @@ function traverseDrive_(driveTree) {
         folders: [],
         files: [],
         editors: [],
-        viewers: []
+        viewers: [],
+        path: currentFolder.path + subfolderName + '/'
       };
       currentFolder.folders.push(newSubFolder);
     }
@@ -216,7 +219,7 @@ function createFolders_(folder) {
 function copyPermissions_(file) {
   // Works for both files and folders.
   // Requires Advanced Drive Service.
-  Logger.log("Getting permissions for %s", file.name);
+  Logger.log("Getting permissions for %s", file.path);
   let filePermissionsList = Drive.Permissions.list(file.id, {fields: "permissions(id,type,emailAddress,role)"}).permissions;
   Logger.log("Creating permissions for its copy, %s", file.destId);
 
@@ -268,6 +271,7 @@ function setFolderSharing_(folder) {
 //----------------------------------------------\\
 function setFileSharing_(folder) {
   if (folder.phase < cloneJob.phase) {
+    Logger.log("Sharing files in %s", folder.path)
     for (let file of folder.files) {
       if (isTimedOut_()) {
         return;
@@ -341,14 +345,16 @@ function findFiles_(folder) {
       if (nextDriveFileName == statefileFilename && folder.id == sourceFolderId) {
         continue;
       }
+      let filename = nextDriveFile.getName();
       let newFile = {
-        name: nextDriveFile.getName(),
+        name: filename,
         id: nextDriveFile.getId(),
         destId: null,
         isStarred: false,
         editors: [],
         viewers: [],
-        size: nextDriveFile.getSize()
+        size: nextDriveFile.getSize(),
+        path: folder.path + filename
       }
       folder.files.push(newFile);
       Logger.log("Found file " + newFile.name);
@@ -359,6 +365,7 @@ function findFiles_(folder) {
 //----------------------------------------------\\
 function copyFiles_(folder) {
   if (folder.phase < cloneJob.phase) {
+    Logger.log("Copying/Moving files in %s", folder.path)
     for (let file of folder.files) {
       if (isTimedOut_()) {
         return;
@@ -412,11 +419,16 @@ function readStateFile_() {
   let destFolder = DriveApp.getFolderById(sourceFolderId);
   let fileList = destFolder.getFilesByName(statefileFilename);
   let rv = null;
-  if (fileList.hasNext()) {
+  let statefileExists = false;
+  while (fileList.hasNext()) {
     var file = fileList.next();
-    rv = JSON.parse(file.getBlob().getDataAsString());
+    if (!file.isTrashed()) {
+      rv = JSON.parse(file.getBlob().getDataAsString());
+      statefileExists = true;
+      break;
+    }
   }
-  else {
+  if (!statefileExists) {
     rv = {
       start: Date.now(),
       timeout: Date.now() + maxRuntime,
@@ -462,5 +474,16 @@ function isTimedOut_() {
   }
   else {
     return false;
+  }
+}
+//----------------------------------------------\\
+function deleteStateFile() {
+  let destFolder = DriveApp.getFolderById(sourceFolderId);
+  let fileList = destFolder.getFilesByName(statefileFilename);
+  while (fileList.hasNext()) {
+    // State file exists - delete it
+    var file = fileList.next();
+    file.setTrashed(true);
+    Logger.log('Trashing %s / %s', destFolder.getName(), statefileFilename )
   }
 }
